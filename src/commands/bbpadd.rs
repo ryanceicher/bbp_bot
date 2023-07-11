@@ -50,7 +50,7 @@ async fn bbpadd(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
                                     match db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await {
                                         Ok(Some(ranked_user)) => {
                                             if let Err(why) = msg.channel_id.say(&ctx.http, 
-                                                format!("{} now has {} bbps, and is the #{} baddest boi.", ranked_user.friendly_name.unwrap(), ranked_user.points, ranked_user.rank.unwrap())).await {
+                                                format!("{} now has {} bbps and is the #{} baddest boi.", &ranked_user.friendly_name.unwrap(), &ranked_user.points, &ranked_user.rank.unwrap())).await {
                                                 eprintln!("Error sending message: {:?}", why);
                                             }
                                         },
@@ -67,7 +67,7 @@ async fn bbpadd(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
                     }
                 },
                 Ok(None) => println!("Author user not found: {}", author),
-                Err(err) => eprintln!("Error getting author user: {}", err),
+                Err(err) => eprintln!("Error getting author user: {}\n {:?}", err, author),
             }
         }
     }).await
@@ -92,7 +92,19 @@ async fn gbpadd(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
                     match db.get_user_by_discord_mention(&target).await {
                         Ok(Some(target_user)) => {
                             match db.add_gbp_to_user(&target_user, &author_user, &description).await {
-                                Ok(_) => println!("GBP added successfully: author - {}, target - {}, description - '{}'", author, target, description),
+                                Ok(_) => {
+                                    match db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await {
+                                        Ok(Some(ranked_user)) => {
+                                            if let Err(why) = msg.channel_id.say(&ctx.http, 
+                                                format!("{} now has {} bbps and is the #{} baddest boi.", &ranked_user.friendly_name.unwrap(), &ranked_user.points, &ranked_user.rank.unwrap())).await {
+                                                eprintln!("Error sending message: {:?}", why);
+                                            }
+                                        },
+                                        Ok(_) => println!("Target user not found: {}", target),
+                                        Err(err) => eprintln!("Error getting target user rank: {}", err),
+                                    }
+                                    println!("GBP added successfully: author - {}, target - {}, description - '{}'", author, target, description)
+                                },
                                 Err(err) => eprintln!("Error adding BBP: {}", err),
                             }
                         },
@@ -135,8 +147,6 @@ where
     }
 
     db_call(&author, &target, &description).await;
-
-    msg.channel_id.say(&ctx.http, "done.").await?;
 
     Ok(())
 }

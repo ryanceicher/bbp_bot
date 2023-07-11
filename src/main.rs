@@ -8,8 +8,8 @@ use std::sync::Arc;
 use commands::GENERAL_GROUP;
 use dataaccess::postgres_service::PostgresService;
 use serenity::async_trait;
-use serenity::client::bridge::gateway::{ShardManager};
-use serenity::framework::standard::buckets::{LimitedFor};
+use serenity::client::bridge::gateway::ShardManager;
+use serenity::framework::standard::buckets::LimitedFor;
 use serenity::framework::standard::macros::{help, hook};
 use serenity::framework::standard::{
     help_commands,
@@ -21,7 +21,7 @@ use serenity::framework::standard::{
     StandardFramework,
 };
 use serenity::http::Http;
-use serenity::model::channel::{Message};
+use serenity::model::channel::Message;
 use serenity::model::gateway::{GatewayIntents, Ready};
 use serenity::model::id::UserId;
 use serenity::prelude::*;
