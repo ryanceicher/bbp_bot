@@ -46,7 +46,19 @@ async fn bbpadd(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
                     match db.get_user_by_discord_mention(&target).await {
                         Ok(Some(target_user)) => {
                             match db.add_bbp_to_user(&target_user, &author_user, &description).await {
-                                Ok(_) => println!("BBP added successfully: author - {}, target - {}, description - '{}'", author, target, description),
+                                Ok(_) => {
+                                    match db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await {
+                                        Ok(Some(ranked_user)) => {
+                                            if let Err(why) = msg.channel_id.say(&ctx.http, 
+                                                format!("{} now has {} bbps, and is the #{} baddest boi.", ranked_user.friendly_name.unwrap(), ranked_user.points, ranked_user.rank.unwrap())).await {
+                                                eprintln!("Error sending message: {:?}", why);
+                                            }
+                                        },
+                                        Ok(_) => println!("Target user not found: {}", target),
+                                        Err(err) => eprintln!("Error getting target user rank: {}", err),
+                                    }
+                                    println!("BBP added successfully: author - {}, target - {}, description - '{}'", author, target, description)
+                                }
                                 Err(err) => eprintln!("Error adding BBP: {}", err),
                             }
                         },
