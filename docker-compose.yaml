@@ -5,3 +5,4 @@ services:
     environment:
       DISCORD_TOKEN: "${DISCORD_TOKEN}"
       PG_CONNECTION_STRING: "${PG_CONNECTION_STRING}"
+    restart: always
