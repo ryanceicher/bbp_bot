@@ -207,11 +207,13 @@ async fn main() {
         | GatewayIntents::DIRECT_MESSAGES 
         | GatewayIntents::MESSAGE_CONTENT;
 
+    println!("Creating database connection...");
     let db = match PostgresService::new(&constr).await {
         Ok(db) => db,
         Err(why) => panic!("Couldn't build database connection: {:?}", why),
     };
 
+    println!("Creating discord client...");
     let mut client = Client::builder(&token, intents)
         .event_handler(Handler)
         .framework(framework)
@@ -225,6 +227,7 @@ async fn main() {
         data.insert::<PostgresServiceContainer>(Arc::new(Mutex::new(db)));
     }
     
+    println!("Attempting to connect to discord...");
     if let Err(why) = client.start().await {
         println!("Client error: {:?}", why);
     }

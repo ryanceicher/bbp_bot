@@ -1,13 +1,14 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
+use bb8_postgres::{PostgresConnectionManager, bb8::Pool};
 use serenity::prelude::TypeMapKey;
 use tokio::sync::Mutex;
-use tokio_postgres::{Client, Error};
-use openssl::ssl::{SslConnector, SslMethod, SslVerifyMode};
+use tokio_postgres::Error;
+use openssl::ssl::{SslConnector, SslMethod};
 use postgres_openssl::MakeTlsConnector;
 
 pub struct PostgresService {
-    pub client: Client,
+    pub pool: Pool<PostgresConnectionManager<MakeTlsConnector>>,
 }
 
 #[derive(Debug)]
@@ -32,25 +33,27 @@ impl TypeMapKey for PostgresService {
 impl PostgresService {
     pub async fn new(conn_str: &str) -> Result<PostgresService, Error> {
         let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
-        builder.set_verify(SslVerifyMode::NONE); // This line disables certificate verification
-        let connector = MakeTlsConnector::new(builder.build());
+        builder.set_verify(openssl::ssl::SslVerifyMode::NONE);
 
-        let (client, connection) = tokio_postgres::connect(conn_str, connector).await?;
+        let manager = PostgresConnectionManager::new(conn_str.parse()?, MakeTlsConnector::new(builder.build()));
+        let pool = Pool::builder()
+            .retry_connection(true)
+            .idle_timeout(Some(Duration::from_secs(86400)))
+            .max_size(15)
+            .build(manager)
+            .await?;
 
-        // The connection object performs the actual communication with the PostgresService,
-        // so spawn it off to run on its own.
-        tokio::spawn(async move {
-            if let Err(e) = connection.await {
-                eprintln!("connection error: {}", e);
-            }
-        });
-
-        Ok(PostgresService { client })
+        Ok(PostgresService { pool })
     }
 
     pub async fn get_user_by_discord_mention(&self, discord_mention: &str) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
-        let rows = self
-            .client
+        // Get a connection from the pool
+        let conn = self.pool.get().await?;
+        if conn.is_closed() {
+            print!("Attempted to use a connection that is closed.")
+        }
+        
+        let rows = conn
             .query("SELECT * FROM public.\"Users\" WHERE \"DiscordMention\" = $1", &[&discord_mention])
             .await?;
     
@@ -65,8 +68,9 @@ impl PostgresService {
     }
 
     pub async fn get_user_by_discord_mention_with_rank(&self, discord_mention: &str) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
-        let rows = self
-            .client
+        let conn = self.pool.get().await?;
+        
+        let rows = conn
             .query("SELECT * FROM (
                         SELECT *, RANK() OVER (ORDER BY \"Points\" DESC) AS \"Rank\"
                         FROM public.\"Users\"
@@ -86,9 +90,9 @@ impl PostgresService {
 
     pub async fn add_bbp_to_user(&self, target: &User, issuer: &User, description: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let timestamp = chrono::Utc::now().naive_utc();
-    
-        let _ = self
-            .client
+        let conn = self.pool.get().await?;
+
+        let _ = conn
             .query(
                 "INSERT INTO public.\"Bbps\" (\"UserID\", \"Value\", \"Description\", \"Timestamp\", \"IssuerID\") VALUES ($1, 1, $2, $3, $4)",
                 &[&target.user_id, &description, &timestamp, &issuer.user_id]
@@ -100,9 +104,9 @@ impl PostgresService {
 
     pub async fn add_gbp_to_user(&self, target: &User, issuer: &User, description: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let timestamp = chrono::Utc::now().naive_utc();
-    
-        let _ = self
-            .client
+        let conn = self.pool.get().await?;
+
+        let _ = conn
             .query(
                 "INSERT INTO public.\"Gbps\" (\"UserID\", \"Value\", \"Description\", \"Timestamp\", \"IssuerID\") VALUES ($1, 1, $2, $3, $4)",
                 &[&target.user_id, &description, &timestamp, &issuer.user_id]
@@ -115,7 +119,7 @@ impl PostgresService {
     fn row_to_user(row: &tokio_postgres::Row) -> User {
         User {
             user_id: row.get("UserID"),
-            username: None,
+            username: None, // This columns isnt currently used
             discord_username: row.try_get("DiscordUsername").ok(),
             discord_mention: row.try_get("DiscordMention").ok(),
             discord_id: 0, // todo figure out how to deserialize a numeric column to i64
