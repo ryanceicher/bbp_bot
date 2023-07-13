@@ -116,6 +116,37 @@ impl PostgresService {
         Ok(())
     }
 
+    pub async fn forgive_user(&self, target: &User, issuer: &User) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.pool.get().await?;
+
+        let rows = conn
+            .query(
+                "WITH most_recent AS (
+                    SELECT \"BbpID\"
+                    FROM public.\"Bbps\"
+                    WHERE \"IssuerID\" = $1 AND \"UserID\" = $2 AND \"Forgiven\" = false
+                    ORDER BY \"Timestamp\" DESC
+                    LIMIT 1
+                )
+                UPDATE public.\"Bbps\"
+                SET \"Forgiven\" = true
+                FROM most_recent
+                WHERE \"Bbps\".\"BbpID\" = most_recent.\"BbpID\"
+                RETURNING *;",
+                &[&issuer.user_id, &target.user_id]
+            )
+            .await?;
+    
+        match rows.len() {
+            0 => Ok(None),
+            1 => match rows[0].try_get::<_, Option<String>>("Description") {
+                    Ok(description) => Ok(description),
+                    Err(_) => Err("Couldn't get the description for the forgive.".into())
+                },
+            _ => Err("Multiple users found for a single Discord mention".into()),
+        }
+    }
+
     fn row_to_user(row: &tokio_postgres::Row) -> User {
         User {
             user_id: row.get("UserID"),

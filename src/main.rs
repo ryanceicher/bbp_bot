@@ -150,12 +150,15 @@ impl EventHandler for Handler {
 
 #[tokio::main]
 async fn main() {
+    println!("BBP BOT INITIALIZING");
+
     dotenv::dotenv().ok();
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
     let constr = env::var("PG_CONNECTION_STRING").expect("Expected a connection string for postgres.");
 
     let http = Http::new(&token);
 
+    println!("Fetching bot application owners from discord...");
     // We will fetch your bot's owners and id
     let (owners, bot_id) = match http.get_current_application_info().await {
         Ok(info) => {
@@ -173,6 +176,7 @@ async fn main() {
         Err(why) => panic!("Could not access application info: {:?}", why),
     };
 
+    println!("Setting up serenity framework...");
     let framework = StandardFramework::new()
         .configure(|c| c
         .with_whitespace(true)
