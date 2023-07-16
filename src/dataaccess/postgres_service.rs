@@ -25,6 +25,12 @@ pub struct User {
     pub rank: Option<i64>
 }
 
+impl PartialEq for User {
+    fn eq(&self, other: &Self) -> bool {
+        self.user_id == other.user_id
+    }
+}
+
 impl TypeMapKey for PostgresService {
     type Value = Arc<Mutex<PostgresService>>;
 }
