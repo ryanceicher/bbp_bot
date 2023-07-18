@@ -7,6 +7,7 @@ use regex::Regex;
 
 use crate::PostgresServiceContainer;
 use crate::dataaccess::postgres_service;
+use crate::commands::commands::COMMANDS_COMMAND_COMMAND;
 
 lazy_static! {
     static ref RE: Regex = Regex::new(r"^<@\d+>$").unwrap();
@@ -14,7 +15,7 @@ lazy_static! {
 
 #[command]
 #[bucket = "complicated"]
-#[sub_commands(bbpadd_command, forgive)]
+#[sub_commands(bbpadd_command, forgive, commands_command)]
 async fn bbp(_ctx: &Context, _msg: &Message, _args: Args) -> CommandResult {
     Ok(())
 }
