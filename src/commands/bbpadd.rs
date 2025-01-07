@@ -29,6 +29,25 @@ async fn gbp(_ctx: &Context, _msg: &Message, _args: Args) -> CommandResult {
 
 #[command]
 #[bucket = "complicated"]
+#[aliases("add-user")]
+async fn bbpadduser_command(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
+    if let Ok((issuer, target, description)) = parse_command_mention_and_description(msg, args) {
+        if let Ok(Some(ranked_user)) = add_bbp(ctx, issuer, target, description).await {
+            if let Err(why) = msg.channel_id.say(&ctx.http, 
+                format!("{}(#{}) now has {} bbps.", 
+                    &ranked_user.friendly_name.unwrap(), 
+                    &ranked_user.rank.unwrap(), 
+                    &ranked_user.points)).await {
+                eprintln!("Error sending message: {:?}", why);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+#[command]
+#[bucket = "complicated"]
 #[aliases("add")]
 async fn bbpadd_command(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
     if let Ok((issuer, target, description)) = parse_command_mention_and_description(msg, args) {
@@ -166,7 +185,7 @@ async fn forgive(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
             Ok(())
         },
         Err(err) => { 
-            msg.channel_id.say(&ctx.http, &err).await?;
+            msg.channel_id.say(&ctx.http, "TODO WHAT IS WRONG HERE").await?;
             Err(err)
         }
     }

@@ -94,6 +94,16 @@ impl PostgresService {
         }
     }
 
+
+    pub async fn add_user(&self, discord_mention: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.pool.get().await?;
+        let _ = conn
+            .query("INSERT INTO public.\"Users\" (\"DiscordMention\") VALUES ($1)", &[&discord_mention])
+            .await?;
+    
+        Ok(())
+    }
+
     pub async fn add_bbp_to_user(&self, target: &User, issuer: &User, description: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let timestamp = chrono::Utc::now().naive_utc();
         let conn = self.pool.get().await?;

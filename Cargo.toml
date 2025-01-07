@@ -7,13 +7,13 @@ edition = "2021"
 name = "bbp_bot"
 path = "./src/main.rs"
 
-[dependencies.serenity]
-version = "0.11.6"
-features = ["framework", "standard_framework", "rustls_backend"]
-
 [dependencies.tokio]
 version = "1.0"
 features = ["macros", "rt-multi-thread"]
+
+[dependencies.serenity]
+version = "0.12.4"
+features = ["framework", "standard_framework", "rustls_backend"]
 
 [dependencies.tokio-postgres]
 version = "0.7.8"
@@ -30,7 +30,7 @@ dotenv = "0.15.0"
 lazy_static = "1"
 regex = "1"
 postgres-openssl = "0.5.0"
-openssl = "0.10.55"
-chrono = "0.4.16"
-bb8 = "0.8.1"
-bb8-postgres = "0.8.1"
+openssl = "0.10.68"
+chrono = "0.4.39"
+bb8 = "0.9.0"
+bb8-postgres = "0.9.0"

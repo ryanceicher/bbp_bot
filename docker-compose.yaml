@@ -1,4 +1,3 @@
-version: '3.8'
 services:
   bbp_bot:
     image: bbp-bot:1.0.4

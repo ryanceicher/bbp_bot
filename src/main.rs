@@ -1,14 +1,16 @@
+#![allow(depricated)]
 mod commands;
 mod dataaccess;
 
 use std::collections::{HashSet, HashMap};
 use std::env;
 use std::sync::Arc;
-
+use serenity::all::ResumedEvent;
+use serenity::all::standard::{BucketBuilder, Configuration};
 use commands::GENERAL_GROUP;
 use dataaccess::postgres_service::PostgresService;
 use serenity::async_trait;
-use serenity::client::bridge::gateway::ShardManager;
+use serenity::gateway::ShardManager;
 use serenity::framework::standard::buckets::LimitedFor;
 use serenity::framework::standard::macros::{help, hook};
 use serenity::framework::standard::{
@@ -33,7 +35,7 @@ use tokio::sync::Mutex;
 struct ShardManagerContainer;
 
 impl TypeMapKey for ShardManagerContainer {
-    type Value = Arc<Mutex<ShardManager>>;
+    type Value = Arc<ShardManager>;
 }
 
 struct PostgresServiceContainer;
@@ -49,6 +51,21 @@ impl TypeMapKey for CommandCounter {
 }
 
 struct Handler;
+
+#[async_trait]
+impl EventHandler for Handler {
+    async fn ready(&self, _: Context, ready: Ready) {
+        if let Some(shard) = ready.shard
+        {
+            println!("{} is connected on shard {}/{}", ready.user.name, shard.id, shard.total);
+        }
+    }
+
+    async fn resume(&self, _: Context, _: ResumedEvent)
+    {
+        println!("Resumed");
+    }
+}
 
 #[help]
 #[individual_command_tip = "Hello! If you want more information about a specific command, just pass the command as argument."]
@@ -141,12 +158,6 @@ fn _dispatch_error_no_macro<'fut>(
     .boxed()
 }
 
-#[async_trait]
-impl EventHandler for Handler {
-    async fn ready(&self, _: Context, ready: Ready) {
-        println!("{} is connected!", ready.user.name);
-    }
-}
 
 #[tokio::main]
 async fn main() {
@@ -166,7 +177,7 @@ async fn main() {
             if let Some(team) = info.team {
                 owners.insert(team.owner_user_id);
             } else {
-                owners.insert(info.owner.id);
+                owners.insert(info.owner.unwrap().id);
             }
             match http.get_current_user().await {
                 Ok(bot_id) => (owners, bot_id.id),
@@ -178,18 +189,13 @@ async fn main() {
 
     println!("Setting up serenity framework...");
     let framework = StandardFramework::new()
-        .configure(|c| c
-        .with_whitespace(true)
-        .on_mention(Some(bot_id))
-        .prefix("!")
-        .delimiters(vec![" "])
-        .owners(owners))
         .before(before)
         .after(after)
         .unrecognised_command(unknown_command)
         .normal_message(normal_message)
         .on_dispatch_error(dispatch_error)
-        .bucket("complicated", |b| b.limit(2).time_span(30).delay(5)
+        .bucket("complicated", BucketBuilder::default()
+            .limit(2).time_span(30).delay(5)
             // The target each bucket will apply to.
             .limit_for(LimitedFor::Channel)
             // The maximum amount of command invocations that can be delayed per target.
@@ -199,6 +205,14 @@ async fn main() {
             .delay_action(delay_action)).await
         .help(&MY_HELP)
         .group(&GENERAL_GROUP);
+        
+    framework .configure(Configuration::new()
+        .with_whitespace(true)
+        .on_mention(Some(bot_id))
+        .prefix("!")
+        .delimiters(vec![" "])
+        .owners(owners)
+    );
 
     // For this example to run properly, the "Presence Intent" and "Server Members Intent"
     // options need to be enabled.
@@ -227,7 +241,7 @@ async fn main() {
 
     {
         let mut data = client.data.write().await;
-        data.insert::<ShardManagerContainer>(Arc::clone(&client.shard_manager));
+        data.insert::<ShardManagerContainer>(client.shard_manager.clone());
         data.insert::<PostgresServiceContainer>(Arc::new(Mutex::new(db)));
     }
     
