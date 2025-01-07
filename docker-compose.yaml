@@ -1,6 +1,6 @@
 services:
   bbp_bot:
-    image: bbp-bot:1.0.4
+    image: bbp-bot:1.0.5
     environment:
       DISCORD_TOKEN: "${DISCORD_TOKEN}"
       PG_CONNECTION_STRING: "${PG_CONNECTION_STRING}"

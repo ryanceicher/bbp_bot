@@ -8,10 +8,10 @@ async fn commands_command(ctx: &Context, msg: &Message, _args: Args) -> CommandR
     let mut commands_response = "Available !bbp commands:\n".to_string();
 
     writeln!(commands_response, "- !bbp add [@mention] [description]")?;
-    writeln!(commands_response, "   - Adds the a bbp for the mentioned with the provided description.")?;
+    writeln!(commands_response, "   - Adds a bbp for the mentioned with the provided description.")?;
     writeln!(commands_response, "- !gbp add [@mention] [description]")?;
-    writeln!(commands_response, "   - Adds the a gbp for the mentioned with the provided description.")?;
-    writeln!(commands_response, "- !bbp add [@mention]")?;
+    writeln!(commands_response, "   - Adds a gbp for the mentioned with the provided description.")?;
+    writeln!(commands_response, "- !bbp forgive [@mention]")?;
     writeln!(commands_response, "   - Forgives the mentioned user for their last transgression against you.")?;
     
     if let Err(why) = msg.channel_id.say(&ctx.http, &commands_response).await {
