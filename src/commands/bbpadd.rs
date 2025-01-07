@@ -31,17 +31,16 @@ async fn gbp(_ctx: &Context, _msg: &Message, _args: Args) -> CommandResult {
 #[bucket = "complicated"]
 #[aliases("add-user")]
 async fn bbpadduser_command(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    if let Ok((issuer, target, description)) = parse_command_mention_and_description(msg, args) {
-        if let Ok(Some(ranked_user)) = add_bbp(ctx, issuer, target, description).await {
-            if let Err(why) = msg.channel_id.say(&ctx.http, 
-                format!("{}(#{}) now has {} bbps.", 
-                    &ranked_user.friendly_name.unwrap(), 
-                    &ranked_user.rank.unwrap(), 
-                    &ranked_user.points)).await {
-                eprintln!("Error sending message: {:?}", why);
-            }
-        }
-    }
+    let (issuer, target, description) = parse_command_mention_and_description(msg, args)?;
+
+    let ranked_user = add_bbp(ctx, issuer, target, description).await?
+        .ok_or_else(|| CommandError::from("Ranked user not found"))?;
+
+    msg.channel_id.say(&ctx.http,
+        format!("{}(#{}) now has {} bbps.",
+            &ranked_user.friendly_name.unwrap(),
+            &ranked_user.rank.unwrap(),
+            &ranked_user.points)).await?;
 
     Ok(())
 }
@@ -50,17 +49,28 @@ async fn bbpadduser_command(ctx: &Context, msg: &Message, args: Args) -> Command
 #[bucket = "complicated"]
 #[aliases("add")]
 async fn bbpadd_command(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    if let Ok((issuer, target, description)) = parse_command_mention_and_description(msg, args) {
-        if let Ok(Some(ranked_user)) = add_bbp(ctx, issuer, target, description).await {
-            if let Err(why) = msg.channel_id.say(&ctx.http, 
-                format!("{}(#{}) now has {} bbps.", 
-                    &ranked_user.friendly_name.unwrap(), 
-                    &ranked_user.rank.unwrap(), 
-                    &ranked_user.points)).await {
-                eprintln!("Error sending message: {:?}", why);
-            }
-        }
-    }
+    let (issuer, target, description) = parse_command_mention_and_description(msg, args)?;
+
+    let data_read = ctx.data.read().await;
+    let db_lock = data_read.get::<PostgresServiceContainer>().expect("Expected PostgresService in TypeMap.");
+    let db = db_lock.lock().await;
+
+    let issuing_user = db.get_user_by_discord_mention(&issuer).await?
+        .ok_or_else(CommandError::from("Issuing user not found"))?;
+
+    let target_user = db.get_user_by_discord_mention(&target).await?
+        .ok_or_else(CommandError::from("Target user not found"))?;
+
+    db.add_bbp_to_user(&target_user, &issuing_user, &description).await?;
+
+    let ranked_user = db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await?
+        .ok_or_else(CommandError::from("Ranked user not found"))?;
+
+    msg.channel_id.say(&ctx.http, 
+        format!("{}(#{}) now has {} bbps.",
+            &ranked_user.friendly_name.unwrap(),
+            &ranked_user.rank.unwrap(),
+            &ranked_user.points)).await?;
 
     Ok(())
 }
@@ -69,30 +79,26 @@ async fn bbpadd_command(ctx: &Context, msg: &Message, args: Args) -> CommandResu
 #[bucket = "complicated"]
 #[aliases("add")]
 async fn gbpadd_command(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    if let Ok((issuer, target, description)) = parse_command_mention_and_description(msg, args) {
-        // If someone tries to give themselves a gbp, they get a bbp instead.
-        if issuer == target {
-            if let Ok(Some(ranked_user)) = add_bbp(ctx, target.clone(), target, "Attempting to give themselves a GBP 😡".to_string()).await {
-                if let Err(why) = msg.channel_id.say(&ctx.http, 
-                    format!("😡 trying to give yourself a gbp? Thats a bbp for you. {}(#{}) now has {} bbps.", 
-                        &ranked_user.friendly_name.unwrap(), 
-                        &ranked_user.rank.unwrap(), 
-                        &ranked_user.points)).await {
-                    eprintln!("Error sending message: {:?}", why);
-                }
-            }
-        } else {
-            // Add the gbp normally
-            if let Ok(Some(ranked_user)) = add_gbp(ctx, issuer, target, description).await {
-                if let Err(why) = msg.channel_id.say(&ctx.http, 
-                    format!("{}(#{}) now has {} bbps.", 
-                        &ranked_user.friendly_name.unwrap(), 
-                        &ranked_user.rank.unwrap(), 
-                        &ranked_user.points)).await {
-                    eprintln!("Error sending message: {:?}", why);
-                }
-            }
-        }
+    let (issuer, target, description) = parse_command_mention_and_description(msg, args)?;
+
+    if issuer == target {
+        let ranked_user = add_bbp(ctx, target.clone(), target, "Attempting to give themselves a GBP 😡".to_string()).await?
+            .ok_or_else(CommandError::from("Ranked user not found"))?;
+
+        msg.channel_id.say(&ctx.http,
+            format!("😡 trying to give yourself a gbp? Thats a bbp for you. {}(#{}) now has {} bbps.",
+                &ranked_user.friendly_name.unwrap(),
+                &ranked_user.rank.unwrap(),
+                &ranked_user.points)).await?;
+    } else {
+        let ranked_user = add_gbp(ctx, issuer, target, description).await?
+            .ok_or_else(CommandError::from("Ranked user not found"))?;
+
+        msg.channel_id.say(&ctx.http,
+            format!("{}(#{}) now has {} bbps.",
+                &ranked_user.friendly_name.unwrap(),
+                &ranked_user.rank.unwrap(),
+                &ranked_user.points)).await?;
     }
 
     Ok(())
@@ -103,22 +109,18 @@ async fn add_bbp(ctx: &Context, issuer: String, target: String, description: Str
     let db_lock = data_read.get::<PostgresServiceContainer>().expect("Expected PostgresService in TypeMap.");
     let db = db_lock.lock().await;
 
-    match db.get_user_by_discord_mention(&issuer).await {
-        Ok(Some(issuing_user)) => match db.get_user_by_discord_mention(&target).await {
-            Ok(Some(target_user)) => match db.add_bbp_to_user(&target_user, &issuing_user, &description).await {
-                Ok(_) => match db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await {
-                    Ok(Some(ranked_user)) => Ok(Some(ranked_user)),
-                    Ok(_) => Ok(print_and_return_none("Ranked user not found")),
-                    Err(err) => print_and_return_err(err, "Error getting ranked target user"),
-                }
-                Err(err) => print_and_return_err(err, "Error adding BBP: {}")
-            },
-            Ok(None) => Ok(print_and_return_none("Target user not found")),
-            Err(err) => print_and_return_err(err, "Error getting target user: {}"),
-        },
-        Ok(None) => Ok(print_and_return_none("Issuing user not found")),
-        Err(err) => print_and_return_err(err, "Error getting issuing user: {}"),
-    }
+    let issuing_user = db.get_user_by_discord_mention(&issuer).await?
+        .ok_or_else(|| "Issuing user not found")?;
+
+    let target_user = db.get_user_by_discord_mention(&target).await?
+        .ok_or_else(|| "Target user not found")?;
+
+    db.add_bbp_to_user(&target_user, &issuing_user, &description).await?;
+
+    let ranked_user = db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await?
+        .ok_or_else(|| "Ranked user not found")?;
+
+    Ok(Some(ranked_user))
 }
 
 async fn add_gbp(ctx: &Context, issuer: String, target: String, description: String) -> Result<Option<postgres_service::User>, Box<dyn std::error::Error + Send + Sync>> {
@@ -126,71 +128,51 @@ async fn add_gbp(ctx: &Context, issuer: String, target: String, description: Str
     let db_lock = data_read.get::<PostgresServiceContainer>().expect("Expected PostgresService in TypeMap.");
     let db = db_lock.lock().await;
 
-    match db.get_user_by_discord_mention(&issuer).await {
-        Ok(Some(issuing_user)) => match db.get_user_by_discord_mention(&target).await {
-            Ok(Some(target_user)) => match db.add_gbp_to_user(&target_user, &issuing_user, &description).await {
-                Ok(_) => match db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await {
-                    Ok(Some(ranked_user)) => Ok(Some(ranked_user)),
-                    Ok(_) => Ok(print_and_return_none("Ranked user not found")),
-                    Err(err) => print_and_return_err(err, "Error getting ranked target user"),
-                }
-                Err(err) => print_and_return_err(err, "Error adding BBP: {}")
-            },
-            Ok(None) => Ok(print_and_return_none("Target user not found")),
-            Err(err) => print_and_return_err(err, "Error getting target user: {}"),
-        },
-        Ok(None) => Ok(print_and_return_none("Issuing user not found")),
-        Err(err) => print_and_return_err(err, "Error getting issuing user: {}"),
-    }
+    let issuing_user = db.get_user_by_discord_mention(&issuer).await?
+        .ok_or_else(|| "Issuing user not found")?;
+
+    let target_user = db.get_user_by_discord_mention(&target).await?
+        .ok_or_else(|| "Target user not found")?;
+
+    db.add_gbp_to_user(&target_user, &issuing_user, &description).await?;
+
+    let ranked_user = db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await?
+        .ok_or_else(|| "Ranked user not found")?;
+
+    Ok(Some(ranked_user))
 }
 
 #[command]
 #[bucket = "complicated"]
 #[aliases("forgive")]
 async fn forgive(ctx: &Context, msg: &Message, args: Args) -> CommandResult {
-    match parse_command_mention_only(msg, args) {
-        Ok((issuer, target, _)) => {
-            let data_read = ctx.data.read().await;
-            let db_lock = data_read.get::<PostgresServiceContainer>().expect("Expected PostgresService in TypeMap.");
-            let db = db_lock.lock().await;
+    let (issuer, target, _) = parse_command_mention_only(msg, args)?;
 
-            match db.get_user_by_discord_mention(&issuer).await {
-                Ok(Some(issuing_user)) => match db.get_user_by_discord_mention(&target).await {
-                    Ok(Some(target_user)) => match db.forgive_user(&target_user, &issuing_user).await {
-                        Ok(Some(description)) => match db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await {
-                            Ok(Some(ranked_user)) => 
-                                if let Err(why) = msg.channel_id.say(&ctx.http, 
-                                    format!("{}(#{}) was forgiven for '{}' and now only has {} bbps.", 
-                                        &ranked_user.friendly_name.unwrap(), 
-                                        &ranked_user.rank.unwrap(), 
-                                        &description, 
-                                        &ranked_user.points)).await {
-                                    eprintln!("Error sending message: {:?}", why);
-                            },
-                            Ok(_) => println!("Target user not found: {}", target),
-                            Err(err) => eprintln!("Error getting target user rank: {}", err),
-                        },
-                        Ok(None) => if let Err(why) = msg.channel_id.say(&ctx.http, "There is nothing to forgive.").await {
-                            eprintln!("Error sending message: {:?}", why);
-                        },
-                        Err(err) => eprintln!("Error adding forgiveness for BBP: {}", err),
-                    },
-                    Ok(None) => println!("Target user not found: {}", target),
-                    Err(err) => eprintln!("Error getting target user: {}", err),
-                },
-                Ok(None) => println!("Issuing user not found: {}", issuer),
-                Err(err) => eprintln!("Error getting issuing user: {}\n {:?}", err, issuer),
-            }
+    let data_read = ctx.data.read().await;
+    let db_lock = data_read.get::<PostgresServiceContainer>().expect("Expected PostgresService in TypeMap.");
+    let db = db_lock.lock().await;
 
-            Ok(())
-        },
-        Err(err) => { 
-            msg.channel_id.say(&ctx.http, "TODO WHAT IS WRONG HERE").await?;
-            Err(err)
-        }
-    }
+    let issuing_user = db.get_user_by_discord_mention(&issuer).await?
+        .ok_or_else(|| CommandError::from("Issuing user not found"))?;
+
+    let target_user = db.get_user_by_discord_mention(&target).await?
+        .ok_or_else(|| CommandError::from("Target user not found"))?;
+
+    let description = db.forgive_user(&target_user, &issuing_user).await?
+        .ok_or_else(|| CommandError::from("There is nothing to forgive"))?;
+
+    let ranked_user = db.get_user_by_discord_mention_with_rank(&target_user.discord_mention.unwrap()).await?
+        .ok_or_else(|| CommandError::from("Ranked user not found"))?;
+
+    msg.channel_id.say(&ctx.http,
+        format!("{}(#{}) was forgiven for '{}' and now only has {} bbps.",
+            &ranked_user.friendly_name.unwrap(),
+            &ranked_user.rank.unwrap(),
+            &description,
+            &ranked_user.points)).await?;
+
+    Ok(())
 }
-
 fn parse_command_mention_and_description(msg: &Message, args: Args) -> Result<(String, String, String), CommandError> {
     let (issuer, target, args) = parse_command_mention_only(msg, args)?;
     Ok((issuer, target, args.rest().to_string()))

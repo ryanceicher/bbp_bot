@@ -135,30 +135,6 @@ async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError, _com
     }
 }
 
-// You can construct a hook without the use of a macro, too.
-// This requires some boilerplate though and the following additional import.
-use serenity::futures::future::BoxFuture;
-use serenity::FutureExt;
-fn _dispatch_error_no_macro<'fut>(
-    ctx: &'fut mut Context,
-    msg: &'fut Message,
-    error: DispatchError,
-    _command_name: &str,
-) -> BoxFuture<'fut, ()> {
-    async move {
-        if let DispatchError::Ratelimited(info) = error {
-            if info.is_first_try {
-                let _ = msg
-                    .channel_id
-                    .say(&ctx.http, &format!("Try this again in {} seconds.", info.as_secs()))
-                    .await;
-            }
-        };
-    }
-    .boxed()
-}
-
-
 #[tokio::main]
 async fn main() {
     println!("BBP BOT INITIALIZING");
@@ -200,7 +176,7 @@ async fn main() {
             .limit_for(LimitedFor::Channel)
             // The maximum amount of command invocations that can be delayed per target.
             // Setting this to 0 (default) will never await/delay commands and cancel the invocation.
-            .await_ratelimits(1)
+            .await_ratelimits(0)
             // A function to call when a rate limit leads to a delay.
             .delay_action(delay_action)).await
         .help(&MY_HELP)
