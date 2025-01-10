@@ -25,6 +25,26 @@ pub struct User {
     pub rank: Option<i64>
 }
 
+#[derive(Debug)]
+pub struct LeaderboardUser {
+    pub user_id: i32,
+    pub discord_username: Option<String>,
+    pub discord_mention: Option<String>,
+    pub discord_id: i64,
+    pub friendly_name: Option<String>,
+    pub points: i32,
+    pub bbps_issued: i32,
+    pub gbps_issued: i32,
+    pub rank: i64
+}
+
+#[derive(Debug)]
+pub  struct HistoryRecord {
+    pub  issuer_friendly_name: String,
+    pub  description: String,
+    pub  timestamp: chrono::NaiveDateTime,
+}
+
 impl PartialEq for User {
     fn eq(&self, other: &Self) -> bool {
         self.user_id == other.user_id
@@ -35,7 +55,6 @@ impl TypeMapKey for PostgresService {
     type Value = Arc<Mutex<PostgresService>>;
 }
 
-// TODO DONT HAVE ALL TABLES IN THIS ONE STRUCT BUT IDC RIGHT NOW
 impl PostgresService {
     pub async fn new(conn_str: &str) -> Result<PostgresService, Error> {
         let mut builder = SslConnector::builder(SslMethod::tls()).unwrap();
@@ -52,7 +71,7 @@ impl PostgresService {
         Ok(PostgresService { pool })
     }
 
-    pub async fn get_user_by_discord_mention(&self, discord_mention: &str) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_user_by_discord_id(&self, discord_id: i64) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
         // Get a connection from the pool
         let conn = self.pool.get().await?;
         if conn.is_closed() {
@@ -60,20 +79,13 @@ impl PostgresService {
         }
         
         let rows = conn
-            .query("SELECT * FROM public.\"Users\" WHERE \"DiscordMention\" = $1", &[&discord_mention])
+            .query("SELECT * FROM public.\"Users\" WHERE \"DiscordID\" = $1", &[&discord_id])
             .await?;
-    
-        match rows.len() {
-            0 => Ok(None),
-            1 => {
-                let user = PostgresService::row_to_user(&rows[0]);
-                Ok(Some(user))
-            },
-            _ => Err("Multiple users found for a single Discord mention".into()),
-        }
+
+        Self::handle_query_result(&rows)
     }
 
-    pub async fn get_user_by_discord_mention_with_rank(&self, discord_mention: &str) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_user_by_discord_id_with_rank(&self, discord_mention: i64) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.pool.get().await?;
         
         let rows = conn
@@ -81,27 +93,24 @@ impl PostgresService {
                         SELECT *, RANK() OVER (ORDER BY \"Points\" DESC) AS \"Rank\"
                         FROM public.\"Users\"
                     ) ranked_users
-                    WHERE \"DiscordMention\" = $1", &[&discord_mention])
+                    WHERE \"DiscordID\" = $1", &[&discord_mention])
             .await?;
-    
-        match rows.len() {
-            0 => Ok(None),
-            1 => {
-                let user = PostgresService::row_to_user(&rows[0]);
-                Ok(Some(user))
-            },
-            _ => Err("Multiple users found for a single Discord mention".into()),
-        }
+
+        Self::handle_query_result(&rows)
     }
 
-
-    pub async fn add_user(&self, discord_mention: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn add_user(&self, discord_id: i64, discord_username: &str, friendly_name: &str) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
         let conn = self.pool.get().await?;
-        let _ = conn
-            .query("INSERT INTO public.\"Users\" (\"DiscordMention\") VALUES ($1)", &[&discord_mention])
+        let discord_mention = format!("<@{}>", discord_id);
+        
+        let rows = conn
+            .query(
+                "INSERT INTO public.\"Users\" (\"DiscordID\",\"DiscordUsername\",\"DiscordMention\",\"FriendlyName\") \
+                VALUES ($1,$2,$3,$4)\
+                RETURNING *", &[&discord_id, &discord_username, &discord_mention, &friendly_name])
             .await?;
-    
-        Ok(())
+
+        Self::handle_query_result(&rows)
     }
 
     pub async fn add_bbp_to_user(&self, target: &User, issuer: &User, description: &str) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -163,13 +172,89 @@ impl PostgresService {
         }
     }
 
+    pub async fn get_leaderboard(&self) -> Result<Vec<LeaderboardUser>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.pool.get().await?;
+
+        let rows = conn
+            .query(
+                "SELECT \"UserID\", \"DiscordUsername\", \"DiscordMention\", \"DiscordID\", \"FriendlyName\", \"Points\", \"BbpsIssued\", \"GbpsIssued\", \"Rank\"
+                 FROM (
+                     SELECT *, RANK() OVER (ORDER BY \"Points\" DESC) AS \"Rank\"
+                     FROM public.\"Users\"
+                 ) ranked_users
+                 ORDER BY \"Rank\"
+                 LIMIT 10",
+                &[]
+            )
+            .await?;
+
+        let leaderboard = rows.iter().map(|row| LeaderboardUser {
+            user_id: row.get("UserID"),
+            discord_username: row.try_get("DiscordUsername").ok(),
+            discord_mention: row.try_get("DiscordMention").ok(),
+            discord_id: row.get("DiscordID"),
+            friendly_name: row.try_get("FriendlyName").ok(),
+            points: row.get("Points"),
+            bbps_issued: row.get("BbpsIssued"),
+            gbps_issued: row.get("GbpsIssued"),
+            rank: row.get("Rank"),
+        }).collect();
+
+        Ok(leaderboard)
+    }
+
+    pub async fn get_user_history(&self, discord_id: i64) -> Result<Vec<HistoryRecord>, Box<dyn std::error::Error + Send + Sync>> {
+        let conn = self.pool.get().await?;
+
+        // First, get the UserID from the Users table using the DiscordID
+        let user_id_row = conn
+            .query_one("SELECT \"UserID\" FROM public.\"Users\" WHERE \"DiscordID\" = $1", &[&discord_id])
+            .await?;
+
+        let user_id: i32 = user_id_row.get("UserID");
+
+        // Then, get the history records for the UserID
+        let rows = conn
+            .query(
+                "SELECT u.\"FriendlyName\", b.\"Description\", b.\"Timestamp\"
+                 FROM public.\"Bbps\" b
+                 JOIN public.\"Users\" u ON b.\"IssuerID\" = u.\"UserID\"
+                 WHERE b.\"UserID\" = $1
+                 ORDER BY b.\"Timestamp\" DESC
+                 LIMIT 10",
+                &[&user_id]
+            )
+            .await?;
+
+        let history = rows.iter().map(|row| {
+            HistoryRecord {
+                issuer_friendly_name: row.get("FriendlyName"),
+                description: row.get("Description"),
+                timestamp: row.get("Timestamp"),
+            }
+        }).collect();
+
+        Ok(history)
+    }
+    
+    fn handle_query_result(rows: &[tokio_postgres::Row]) -> Result<Option<User>, Box<dyn std::error::Error + Send + Sync>> {
+        match rows.len() {
+            0 => Ok(None),
+            1 => {
+                let user = PostgresService::row_to_user(&rows[0]);
+                Ok(Some(user))
+            },
+            _ => Err("Multiple users found for a single Discord mention".into()),
+        }
+    }
+
     fn row_to_user(row: &tokio_postgres::Row) -> User {
         User {
             user_id: row.get("UserID"),
             username: None, // This columns isnt currently used
             discord_username: row.try_get("DiscordUsername").ok(),
             discord_mention: row.try_get("DiscordMention").ok(),
-            discord_id: 0, // todo figure out how to deserialize a numeric column to i64
+            discord_id: row.get("DiscordID"), 
             friendly_name: row.try_get("FriendlyName").ok(),
             points: row.get("Points"),
             bbps_issued: row.get("BbpsIssued"),

@@ -1,228 +1,61 @@
-#![allow(depricated)]
 mod commands;
 mod dataaccess;
 
-use std::collections::{HashSet, HashMap};
+use poise::serenity_prelude as serenity;
 use std::env;
 use std::sync::Arc;
-use serenity::all::ResumedEvent;
-use serenity::all::standard::{BucketBuilder, Configuration};
-use commands::GENERAL_GROUP;
-use dataaccess::postgres_service::PostgresService;
-use serenity::async_trait;
-use serenity::gateway::ShardManager;
-use serenity::framework::standard::buckets::LimitedFor;
-use serenity::framework::standard::macros::{help, hook};
-use serenity::framework::standard::{
-    help_commands,
-    Args,
-    CommandGroup,
-    CommandResult,
-    DispatchError,
-    HelpOptions,
-    StandardFramework,
-};
-use serenity::http::Http;
-use serenity::model::channel::Message;
-use serenity::model::gateway::{GatewayIntents, Ready};
-use serenity::model::id::UserId;
-use serenity::prelude::*;
-use tokio::sync::Mutex;
-
-// A container type is created for inserting into the Client's `data`, which
-// allows for data to be accessible across all events and framework commands, or
-// anywhere else that has a copy of the `data` Arc.
-struct ShardManagerContainer;
-
-impl TypeMapKey for ShardManagerContainer {
-    type Value = Arc<ShardManager>;
-}
+use poise::futures_util::lock::Mutex;
+use serenity::prelude::TypeMapKey;
+use crate::dataaccess::postgres_service::PostgresService;
 
 struct PostgresServiceContainer;
 
 impl TypeMapKey for PostgresServiceContainer{
     type Value = Arc<Mutex<PostgresService>>;
 }
-
-struct CommandCounter;
-
-impl TypeMapKey for CommandCounter {
-    type Value = HashMap<String, u64>;
-}
-
-struct Handler;
-
-#[async_trait]
-impl EventHandler for Handler {
-    async fn ready(&self, _: Context, ready: Ready) {
-        if let Some(shard) = ready.shard
-        {
-            println!("{} is connected on shard {}/{}", ready.user.name, shard.id, shard.total);
-        }
-    }
-
-    async fn resume(&self, _: Context, _: ResumedEvent)
-    {
-        println!("Resumed");
-    }
-}
-
-#[help]
-#[individual_command_tip = "Hello! If you want more information about a specific command, just pass the command as argument."]
-#[command_not_found_text = "Could not find: `{}`."]
-#[max_levenshtein_distance(3)]
-#[indention_prefix = "+"]
-#[lacking_permissions = "Hide"]
-#[lacking_role = "Nothing"]
-#[wrong_channel = "Strike"]
-async fn my_help(
-    context: &Context,
-    msg: &Message,
-    args: Args,
-    help_options: &'static HelpOptions,
-    groups: &[&'static CommandGroup],
-    owners: HashSet<UserId>,
-) -> CommandResult {
-    let _ = help_commands::with_embeds(context, msg, args, help_options, groups, owners).await;
-    Ok(())
-}
-
-#[hook]
-async fn before(ctx: &Context, msg: &Message, command_name: &str) -> bool {
-    println!("Got command '{}' by user '{}'", command_name, msg.author.name);
-
-    let mut data = ctx.data.write().await;
-    let counter = data.get_mut::<CommandCounter>().expect("Expected CommandCounter in TypeMap.");
-    let entry = counter.entry(command_name.to_string()).or_insert(0);
-    *entry += 1;
-
-    true // if `before` returns false, command processing doesn't happen.
-}
-
-#[hook]
-async fn after(_ctx: &Context, _msg: &Message, command_name: &str, command_result: CommandResult) {
-    match command_result {
-        Ok(()) => println!("Processed command '{}'", command_name),
-        Err(why) => println!("Command '{}' returned error {:?}", command_name, why),
-    }
-}
-
-#[hook]
-async fn unknown_command(_ctx: &Context, _msg: &Message, unknown_command_name: &str) {
-    println!("Could not find command named '{}'", unknown_command_name);
-}
-
-#[hook]
-async fn normal_message(_ctx: &Context, msg: &Message) {
-    println!("Message is not a command '{}'", msg.content);
-}
-
-#[hook]
-async fn delay_action(ctx: &Context, msg: &Message) {
-    let _ = msg.react(ctx, '⏱').await;
-}
-
-#[hook]
-async fn dispatch_error(ctx: &Context, msg: &Message, error: DispatchError, _command_name: &str) {
-    if let DispatchError::Ratelimited(info) = error {
-        // We notify them only once.
-        if info.is_first_try {
-            let _ = msg
-                .channel_id
-                .say(&ctx.http, &format!("Try this again in {} seconds.", info.as_secs()))
-                .await;
-        }
-    }
+type Error = Box<dyn std::error::Error + Send + Sync>;
+type Context<'a> = poise::Context<'a, Data, Error>;
+pub struct Data {
+    db: Arc<Mutex<PostgresService>>,
 }
 
 #[tokio::main]
 async fn main() {
-    println!("BBP BOT INITIALIZING");
-
+    env_logger::init();
     dotenv::dotenv().ok();
     let token = env::var("DISCORD_TOKEN").expect("Expected a token in the environment");
     let constr = env::var("PG_CONNECTION_STRING").expect("Expected a connection string for postgres.");
+    let intents = serenity::GatewayIntents::non_privileged();
 
-    let http = Http::new(&token);
-
-    println!("Fetching bot application owners from discord...");
-    // We will fetch your bot's owners and id
-    let (owners, bot_id) = match http.get_current_application_info().await {
-        Ok(info) => {
-            let mut owners = HashSet::new();
-            if let Some(team) = info.team {
-                owners.insert(team.owner_user_id);
-            } else {
-                owners.insert(info.owner.unwrap().id);
-            }
-            match http.get_current_user().await {
-                Ok(bot_id) => (owners, bot_id.id),
-                Err(why) => panic!("Could not access the bot id: {:?}", why),
-            }
-        },
-        Err(why) => panic!("Could not access application info: {:?}", why),
-    };
-
-    println!("Setting up serenity framework...");
-    let framework = StandardFramework::new()
-        .before(before)
-        .after(after)
-        .unrecognised_command(unknown_command)
-        .normal_message(normal_message)
-        .on_dispatch_error(dispatch_error)
-        .bucket("complicated", BucketBuilder::default()
-            .limit(2).time_span(30).delay(5)
-            // The target each bucket will apply to.
-            .limit_for(LimitedFor::Channel)
-            // The maximum amount of command invocations that can be delayed per target.
-            // Setting this to 0 (default) will never await/delay commands and cancel the invocation.
-            .await_ratelimits(0)
-            // A function to call when a rate limit leads to a delay.
-            .delay_action(delay_action)).await
-        .help(&MY_HELP)
-        .group(&GENERAL_GROUP);
-        
-    framework .configure(Configuration::new()
-        .with_whitespace(true)
-        .on_mention(Some(bot_id))
-        .prefix("!")
-        .delimiters(vec![" "])
-        .owners(owners)
-    );
-
-    // For this example to run properly, the "Presence Intent" and "Server Members Intent"
-    // options need to be enabled.
-    // These are needed so the `required_permissions` macro works on the commands that need to
-    // use it.
-    // You will need to enable these 2 options on the bot application, and possibly wait up to 5
-    // minutes.
-    let intents = 
-          GatewayIntents::GUILD_MESSAGES 
-        | GatewayIntents::DIRECT_MESSAGES 
-        | GatewayIntents::MESSAGE_CONTENT;
-
-    println!("Creating database connection...");
-    let db = match PostgresService::new(&constr).await {
-        Ok(db) => db,
-        Err(why) => panic!("Couldn't build database connection: {:?}", why),
-    };
-
-    println!("Creating discord client...");
-    let mut client = Client::builder(&token, intents)
-        .event_handler(Handler)
-        .framework(framework)
-        .type_map_insert::<CommandCounter>(HashMap::default())
-        .await
-        .expect("Err creating client");
-
-    {
-        let mut data = client.data.write().await;
-        data.insert::<ShardManagerContainer>(client.shard_manager.clone());
-        data.insert::<PostgresServiceContainer>(Arc::new(Mutex::new(db)));
-    }
+    let framework = poise::Framework::builder()
+        .options(poise::FrameworkOptions {
+            commands: vec![
+                commands::bbp_commands::bbp_add_command(),
+                commands::bbp_commands::gbp_add_command(),
+                commands::bbp_commands::add_user_command(),
+                commands::bbp_commands::bbp_forgive_command(),
+                commands::bbp_commands::leaderboard_command(),
+                commands::bbp_commands::history_command(),
+            ],
+            initialize_owners: true,
+            ..Default::default()
+        })
+        .setup(|ctx, _ready, framework| {
+            Box::pin(async move {
+                let db = PostgresService::new(&constr).await
+                    .expect("Couldn't build database connection");
+                let data = Data {
+                    db: Arc::new(Mutex::new(db)),
+                };
+                poise::builtins::register_globally(ctx, &framework.options().commands).await?;
+                Ok(data)
+            })
+        })
+        .build();
     
-    println!("Attempting to connect to discord...");
-    if let Err(why) = client.start().await {
-        println!("Client error: {:?}", why);
-    }
+    let client = serenity::ClientBuilder::new(token, intents)
+        .framework(framework)
+        .await;
+    
+    client.unwrap().start().await.unwrap();
 }

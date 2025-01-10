@@ -16,7 +16,7 @@ RUN cargo build --release
 
 # # Our new stage will start from a more minimal image
 # # which results in a smaller final image size
-FROM debian:bullseye-slim
+FROM rust:slim
 
 # Install OpenSSL
 RUN apt-get update && apt-get install -y openssl
